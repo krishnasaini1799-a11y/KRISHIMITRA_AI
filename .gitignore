@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+plantvillage dataset/
+prediction_history.csv
+.env
+venv/
+.venv/
