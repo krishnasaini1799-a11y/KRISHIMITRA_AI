@@ -649,6 +649,65 @@ def predict_weather_disease_risk(temperature, humidity):
         return "🟢 Low Risk", "Current weather is less favorable for fungal disease spread.", "Continue normal care and weekly monitoring."
 
 
+
+def ask_krishimitra_ai(question, language="English"):
+    """Ask OpenAI API for short, safe farmer-friendly guidance."""
+    api_key = os.getenv("OPENAI_API_KEY")
+
+    if not api_key:
+        return (
+            "OpenAI API key not found. Please add OPENAI_API_KEY in Render "
+            "Environment Variables, then rebuild and deploy."
+        )
+
+    system_prompt = (
+        "You are KrishiMitra AI, a farmer-friendly agricultural assistant for Indian farmers. "
+        "Give simple, practical, safe and short advice. "
+        "Do not give exact chemical dosage unless you clearly tell the user to consult a local agriculture expert. "
+        "Prefer safe preventive steps, organic care, monitoring, and expert consultation for serious disease. "
+        f"Reply in {language} if possible."
+    )
+
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4.1-mini",
+                "input": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question},
+                ],
+                "temperature": 0.4,
+                "max_output_tokens": 350,
+            },
+            timeout=30,
+        )
+
+        data = response.json()
+
+        if response.status_code != 200:
+            return data.get("error", {}).get("message", "OpenAI API request failed.")
+
+        if "output_text" in data:
+            return data["output_text"]
+
+        # Fallback parser for Responses API output structure
+        output_parts = []
+        for item in data.get("output", []):
+            for content in item.get("content", []):
+                if content.get("type") in ["output_text", "text"]:
+                    output_parts.append(content.get("text", ""))
+
+        return "\n".join(output_parts).strip() or "No response received from KrishiMitra AI."
+
+    except Exception as e:
+        return f"KrishiMitra AI assistant failed: {e}"
+
+
 model = load_ai_model()
 class_names = load_class_names()
 
@@ -858,54 +917,57 @@ with tab2:
     st.markdown("</div>", unsafe_allow_html=True)
 
 with tab3:
-    
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
     st.subheader("🌦 Live Weather-Based Disease Risk")
 
-    detected_city = get_user_city()
+    st.info(
+        "Enter your city manually for accurate local weather. "
+        "Auto IP location can show wrong city on cloud deployment."
+    )
 
-    if detected_city:
-        st.success(f"📍 Detected Location: {detected_city}")
-        city = detected_city
-    else:
-        st.warning("Location could not be detected automatically.")
-        city = st.text_input("Enter your city", value="Saharanpur")
+    city = st.text_input(
+        "📍 Enter / Confirm Your City",
+        value="Saharanpur"
+    )
 
     if st.button("Get Live Disease Risk", use_container_width=True):
-        weather, error = get_live_weather(city)
-
-        if error:
-            st.error(error)
+        if not city.strip():
+            st.warning("Please enter a city name.")
         else:
-            temperature = weather["temperature"]
-            humidity = weather["humidity"]
-            condition = weather["condition"]
+            weather, error = get_live_weather(city.strip())
 
-            risk_level, risk_msg, action = predict_weather_disease_risk(
-                temperature, humidity
-            )
-
-            c1, c2, c3 = st.columns(3)
-
-            with c1:
-                st.metric("📍 City", weather["city"])
-
-            with c2:
-                st.metric("🌡 Temperature", f"{temperature}°C")
-
-            with c3:
-                st.metric("💧 Humidity", f"{humidity}%")
-
-            st.info(f"☁ Weather Condition: {condition.title()}")
-
-            if "High" in risk_level:
-                st.error(f"{risk_level}: {risk_msg}")
-            elif "Medium" in risk_level:
-                st.warning(f"{risk_level}: {risk_msg}")
+            if error:
+                st.error(error)
             else:
-                st.success(f"{risk_level}: {risk_msg}")
+                temperature = weather["temperature"]
+                humidity = weather["humidity"]
+                condition = weather["condition"]
 
-            st.write(f"**Recommended Action:** {action}")
+                risk_level, risk_msg, action = predict_weather_disease_risk(
+                    temperature, humidity
+                )
+
+                c1, c2, c3 = st.columns(3)
+
+                with c1:
+                    st.metric("📍 City", weather["city"])
+
+                with c2:
+                    st.metric("🌡 Temperature", f"{temperature}°C")
+
+                with c3:
+                    st.metric("💧 Humidity", f"{humidity}%")
+
+                st.info(f"☁ Weather Condition: {condition.title()}")
+
+                if "High" in risk_level:
+                    st.error(f"{risk_level}: {risk_msg}")
+                elif "Medium" in risk_level:
+                    st.warning(f"{risk_level}: {risk_msg}")
+                else:
+                    st.success(f"{risk_level}: {risk_msg}")
+
+                st.write(f"**Recommended Action:** {action}")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -913,29 +975,31 @@ with tab3:
 with tab4:
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
     st.subheader(f"🤖 {T['ask_ai']}")
-    st.write(T["ask_desc"])
+    st.write(
+        "Ask KrishiMitra AI anything about crop disease, watering, prevention, "
+        "fertilizer, fungicide, symptoms, or farmer care."
+    )
 
-    question = st.text_input(T["ask_placeholder"])
+    question = st.text_area(
+        T["ask_placeholder"],
+        height=120,
+        placeholder="Example: My tomato leaves have yellow spots. What should I do?"
+    )
 
-    if question:
-        q = question.lower()
-
-        if "spread" in q or "fail" in q or "फैल" in q:
-            st.success(T["ans_spread"])
-        elif "water" in q or "watering" in q or "पानी" in q:
-            st.success(T["ans_water"])
-        elif "fertilizer" in q or "खाद" in q:
-            st.success(T["ans_fertilizer"])
-        elif "fungicide" in q or "medicine" in q or "दवा" in q:
-            st.success(T["ans_fungicide"])
-        elif "prevent" in q or "prevention" in q or "बचाव" in q:
-            st.success(T["ans_prevention"])
-        elif "expert" in q or "doctor" in q or "किसान" in q:
-            st.success(T["ans_expert"])
+    if st.button("Ask AI Assistant", use_container_width=True):
+        if not question.strip():
+            st.warning("Please type your question first.")
         else:
-            st.info(T["ans_default"])
+            with st.spinner("KrishiMitra AI is thinking..."):
+                answer = ask_krishimitra_ai(question.strip(), language)
+                st.success(answer)
 
+    st.caption(
+        "Note: AI guidance is for basic support only. For serious crop damage, "
+        "consult a local agriculture expert or Krishi Vigyan Kendra."
+    )
     st.markdown("</div>", unsafe_allow_html=True)
+
 
 with tab5:
     st.markdown('<div class="about-card">', unsafe_allow_html=True)
