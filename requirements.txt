@@ -5,3 +5,4 @@ pandas
 pillow
 gtts
 reportlab
+requests

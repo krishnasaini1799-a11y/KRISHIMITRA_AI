@@ -8,6 +8,8 @@ from datetime import datetime
 from treatment_info import TREATMENT_INFO
 from gtts import gTTS
 import tempfile
+import requests
+import os
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 import io
@@ -597,6 +599,56 @@ def create_pdf_report(crop, disease, confidence, severity, treatment):
     return buffer
 
 
+
+def get_user_city():
+    try:
+        response = requests.get("https://ipinfo.io/json", timeout=5)
+        data = response.json()
+        return data.get("city")
+    except Exception:
+        return None
+
+
+def get_live_weather(city):
+    api_key = os.getenv("OPENWEATHER_API_KEY")
+
+    if not api_key:
+        return None, "OpenWeather API key not found."
+
+    url = (
+        "https://api.openweathermap.org/data/2.5/weather"
+        f"?q={city}&appid={api_key}&units=metric"
+    )
+
+    try:
+        response = requests.get(url, timeout=10)
+        data = response.json()
+
+        if response.status_code != 200:
+            return None, data.get("message", "Unable to fetch weather data.")
+
+        return {
+            "city": data["name"],
+            "temperature": data["main"]["temp"],
+            "humidity": data["main"]["humidity"],
+            "condition": data["weather"][0]["description"]
+        }, None
+
+    except Exception as e:
+        return None, str(e)
+
+
+def predict_weather_disease_risk(temperature, humidity):
+    if humidity >= 80 and 18 <= temperature <= 32:
+        return "🔴 High Risk", "High humidity may increase fungal diseases like blight, rust, and powdery mildew.", "Avoid overhead watering, improve airflow, and inspect crops daily."
+
+    elif humidity >= 60 and 18 <= temperature <= 35:
+        return "🟡 Medium Risk", "Weather may support some disease spread.", "Monitor leaves regularly and avoid excess moisture."
+
+    else:
+        return "🟢 Low Risk", "Current weather is less favorable for fungal disease spread.", "Continue normal care and weekly monitoring."
+
+
 model = load_ai_model()
 class_names = load_class_names()
 
@@ -806,31 +858,57 @@ with tab2:
     st.markdown("</div>", unsafe_allow_html=True)
 
 with tab3:
+    
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-    st.subheader(f"🌦 {T['weather_title']}")
+    st.subheader("🌦 Live Weather-Based Disease Risk")
 
-    col_w1, col_w2 = st.columns(2)
+    detected_city = get_user_city()
 
-    with col_w1:
-        humidity = st.slider(f"{T['humidity']} (%)", 0, 100, 75)
-        temperature = st.slider(f"{T['temperature']} (°C)", 0, 50, 28)
-
-    with col_w2:
-        st.metric(T["humidity"], f"{humidity}%")
-        st.metric(T["temperature"], f"{temperature}°C")
-
-    if humidity >= 80 and 18 <= temperature <= 32:
-        st.error(f"🔴 {T['high_weather_risk']}")
-        st.write(T["high_weather_action"])
-    elif humidity >= 60:
-        st.warning(f"🟡 {T['medium_weather_risk']}")
-        st.write(T["medium_weather_action"])
+    if detected_city:
+        st.success(f"📍 Detected Location: {detected_city}")
+        city = detected_city
     else:
-        st.success(f"🟢 {T['low_weather_risk']}")
-        st.write(T["low_weather_action"])
+        st.warning("Location could not be detected automatically.")
+        city = st.text_input("Enter your city", value="Saharanpur")
 
-    st.info(T["weather_note"])
+    if st.button("Get Live Disease Risk", use_container_width=True):
+        weather, error = get_live_weather(city)
+
+        if error:
+            st.error(error)
+        else:
+            temperature = weather["temperature"]
+            humidity = weather["humidity"]
+            condition = weather["condition"]
+
+            risk_level, risk_msg, action = predict_weather_disease_risk(
+                temperature, humidity
+            )
+
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                st.metric("📍 City", weather["city"])
+
+            with c2:
+                st.metric("🌡 Temperature", f"{temperature}°C")
+
+            with c3:
+                st.metric("💧 Humidity", f"{humidity}%")
+
+            st.info(f"☁ Weather Condition: {condition.title()}")
+
+            if "High" in risk_level:
+                st.error(f"{risk_level}: {risk_msg}")
+            elif "Medium" in risk_level:
+                st.warning(f"{risk_level}: {risk_msg}")
+            else:
+                st.success(f"{risk_level}: {risk_msg}")
+
+            st.write(f"**Recommended Action:** {action}")
+
     st.markdown("</div>", unsafe_allow_html=True)
+
 
 with tab4:
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
